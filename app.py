@@ -1,18 +1,22 @@
 import streamlit as st
 import json
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, storage
 from collections import defaultdict
 import random
 import pandas as pd
+import datetime
 
 # ==== Firebase 초기화 ====
 if not firebase_admin._apps:
     service_account_info = json.loads(st.secrets["firebase"]["service_account_json"])
     cred = credentials.Certificate(service_account_info)
-    firebase_admin.initialize_app(cred)
+    firebase_admin.initialize_app(cred, {
+        'storageBucket': st.secrets["firebase"]["storage_bucket"]  # 예: "your-project-id.appspot.com"
+    })
 
 db = firestore.client()
+bucket = storage.bucket()
 
 # ==== 함수: 참가자 불러오기 ====
 def load_participants():
@@ -60,74 +64,65 @@ with st.form("participant_form"):
         db.collection("participants").document(pid).set({"name": name})
         st.success(f"✅ {name} 참가자 등록 완료")
 
-# ---- Google 시트 연동 ----
-st.subheader("📎 Google Sheets 연동 (선택 사항)")
-with st.expander("▶️ Google Sheets에서 불러오기 설정"):
-    st.markdown("1. Google Cloud에서 서비스 계정 JSON 키 발급")
-    st.markdown("2. 시트 공유: 서비스 계정 이메일을 시트에 공유 (편집 권한)")
-    st.markdown("3. 아래 항목을 입력 후 시트 불러오기")
-
-    sheet_json_path = st.text_input("🔑 JSON 키 파일 경로 (서버에 업로드된 경로)")
-    sheet_url_or_key = st.text_input("📄 시트 URL 또는 문서 키")
-    sheet_name = st.text_input("📑 시트 이름 (예: Sheet1)", value="Sheet1")
-    if st.button("Google 시트 불러오기"):
-        try:
-            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-            credentials = ServiceAccountCredentials.from_json_keyfile_name(sheet_json_path, scope)
-            gc = gspread.authorize(credentials)
-            if "https://" in sheet_url_or_key:
-                sh = gc.open_by_url(sheet_url_or_key)
-            else:
-                sh = gc.open_by_key(sheet_url_or_key)
-            worksheet = sh.worksheet(sheet_name)
-            df = pd.DataFrame(worksheet.get_all_records())
-            st.success("✅ 시트 데이터 불러오기 성공")
-        except Exception as e:
-            st.error(f"❌ 시트 불러오기 실패: {e}")
-            df = None
-    else:
-        df = None
-        
-# ==== 엑셀 업로드로 참가자 및 주차별 조 배정 불러오기 ====
-st.subheader("📥 엑셀 업로드 (참가자 + 조 배정 자동 적용)")
+# ==== 엑셀 업로드 및 Firebase Storage 저장 ====
+st.subheader("📥 엑셀 업로드 및 저장 (Firebase Storage + Firestore)")
 uploaded_file = st.file_uploader("엑셀(.xlsx) 업로드", type=["xlsx"])
 if uploaded_file:
-    df = pd.read_excel(uploaded_file)
-    # 참가자 등록
-    for _, row in df.iterrows():
-        name = str(row.get("성명", "")).strip()
-        if name:
-            pid = name.lower().replace(" ", "")
-            db.collection("participants").document(pid).set({"name": name})
-    # 주차별 조 배정 및 출결 기록
-    for week in range(1, 8):
-        col = f"{week}주차"
-        if col in df.columns:
+    blob = bucket.blob(f"uploaded_excels/{uploaded_file.name}")
+    blob.upload_from_string(uploaded_file.getvalue(), content_type=uploaded_file.type)
+    file_url = blob.generate_signed_url(expiration=datetime.timedelta(days=365))
+    db.collection("uploaded_files").document("last_excel").set({
+        "url": file_url,
+        "uploaded_at": firestore.SERVER_TIMESTAMP,
+        "file_name": uploaded_file.name
+    })
+    st.success("✅ 파일 업로드 및 URL 저장 완료")
+
+# 저장된 파일 URL 불러오기 및 데이터 표시
+doc = db.collection("uploaded_files").document("last_excel").get()
+if doc.exists:
+    data = doc.to_dict()
+    st.markdown(f"### 최근 업로드된 엑셀 파일\n- 파일명: {data.get('file_name', 'unknown')}\n- [파일 다운로드/보기]({data['url']})")
+    try:
+        df = pd.read_excel(data['url'])
+        st.dataframe(df)
+        # 자동으로 참가자 및 출결/기본조 배정 반영
+        # (필요시 수동 버튼으로 변경 가능)
+        if st.button("✅ 저장된 엑셀 데이터 참가자 및 출결 반영"):
             for _, row in df.iterrows():
                 name = str(row.get("성명", "")).strip()
-                pid = name.lower().replace(" ", "")
-                val = str(row.get(col, "")).strip()
-                if val == "불참":
-                    status = "absent_pre"
-                elif val == "-":
-                    status = "absent_day"
-                elif val.endswith("조"):
-                    status = "attending"
-                else:
-                    status = "absent_pre"  # 기본 불참 처리
-                db.collection("attendance").add({
-                    "week": str(week),
-                    "participant_id": pid,
-                    "status": status
-                })
-                # 히스토리(기본조) 저장
-                if val.endswith("조"):
-                    db.collection("history").add({
-                        "week": str(week),
-                        "base_group": val,
-                        "participant_id": pid
-                    })
-    st.success("✅ 엑셀에서 참가자 및 출결, 기본조 배정 반영 완료")
+                if name:
+                    pid = name.lower().replace(" ", "")
+                    db.collection("participants").document(pid).set({"name": name})
+            for week in range(1, 8):
+                col = f"{week}주차"
+                if col in df.columns:
+                    for _, row in df.iterrows():
+                        name = str(row.get("성명", "")).strip()
+                        pid = name.lower().replace(" ", "")
+                        val = str(row.get(col, "")).strip()
+                        if val == "불참":
+                            status = "absent_pre"
+                        elif val == "-":
+                            status = "absent_day"
+                        elif val.endswith("조"):
+                            status = "attending"
+                        else:
+                            status = "absent_pre"
+                        db.collection("attendance").add({
+                            "week": str(week),
+                            "participant_id": pid,
+                            "status": status
+                        })
+                        if val.endswith("조"):
+                            db.collection("history").add({
+                                "week": str(week),
+                                "base_group": val,
+                                "participant_id": pid
+                            })
+            st.success("✅ 엑셀 데이터 Firestore 반영 완료")
+    except Exception as e:
+        st.warning(f"저장된 엑셀 파일을 불러오는 데 실패했습니다: {e}")
 
 # ==== 아티클 관리 ====
 st.header("2. 주차별 아티클 등록")
@@ -141,7 +136,6 @@ with st.form("article_form"):
             link = st.text_input(f"{i+1}번 링크", key=f"art_link_{i}")
             article_data.append({"week": str(week), "id": chr(65+i), "title": title, "link": link})
     if st.form_submit_button("아티클 저장"):
-        # 기존 주차 아티클 삭제 후 재등록 (간단히 구현)
         arts = db.collection("articles").where("week", "==", str(week)).stream()
         for doc in arts:
             doc.reference.delete()
@@ -149,7 +143,7 @@ with st.form("article_form"):
             db.collection("articles").add(art)
         st.success("✅ 아티클 저장 완료")
 
-# ==== 출결 등록 ====
+# ==== 출결 등록 (기본값: 출석) ====
 st.header("3. 출결 등록")
 selected_week = st.selectbox("출결 등록 주차 선택", list(range(1, 8)))
 participants = load_participants()
@@ -172,30 +166,24 @@ if st.button("조 배정 실행"):
     present = [pid for pid, status in attendance.get(str(selected_week), {}).items() if status == "attending"]
     random.shuffle(present)
 
-    # 기본조 4~5명으로 구성
     base_groups = [present[i:i+4] for i in range(0, len(present), 4)]
-    if len(base_groups[-1]) == 3 and len(present) % 4 != 0:
-        # 마지막 그룹 3명일 때 마지막에 남은 1명 넣기 (5명 조)
-        if len(base_groups) > 1:
-            base_groups[-2].append(base_groups[-1].pop())
 
-    # 활동조(아티클) 배정
+    if base_groups:
+        if len(base_groups[-1]) == 3 and len(present) % 4 != 0:
+            if len(base_groups) > 1:
+                base_groups[-2].append(base_groups[-1].pop())
+
     article_ids = [a['id'] for a in articles.get(str(selected_week), [])]
     activity_groups = {aid: [] for aid in article_ids}
     for pid in present:
-        aid = random.choice(article_ids)
-        activity_groups[aid].append(pid)
+        aid = random.choice(article_ids) if article_ids else None
+        if aid:
+            activity_groups[aid].append(pid)
 
-    # 기본조 내 아티클 겹침 체크 (5명 조 예외)
-    # (간단히 넘어감, 필요시 추가 구현 가능)
-
-    # Firestore에 저장 (history 컬렉션)
-    # 기존 기록 삭제 후 저장
     histories = db.collection("history").where("week", "==", str(selected_week)).stream()
     for doc in histories:
         doc.reference.delete()
 
-    # 기본조 저장
     for idx, group in enumerate(base_groups, start=1):
         for pid in group:
             db.collection("history").add({
@@ -203,7 +191,7 @@ if st.button("조 배정 실행"):
                 "base_group": f"{idx}조",
                 "participant_id": pid
             })
-    # 활동조 저장
+
     for aid, members in activity_groups.items():
         for pid in members:
             db.collection("history").add({
@@ -213,7 +201,7 @@ if st.button("조 배정 실행"):
             })
     st.success(f"✅ {selected_week}주차 조 배정 완료")
 
-# ==== 이력 확인 ====
+# ==== 조 배정 이력 확인 ====
 st.header("5. 조 배정 이력 확인")
 histories = load_history()
 participants = load_participants()
