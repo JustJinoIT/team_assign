@@ -48,6 +48,20 @@ with st.form("participant_form"):
         save_json(PARTICIPANTS_FILE, participants)
         st.success(f"✅ {name} 등록 완료")
 
+# ---- 엑셀 업로드로 참가자 등록 ----
+st.subheader("📥 엑셀 업로드로 다중 참가자 등록")
+uploaded_file = st.file_uploader("참여자 엑셀 파일 업로드", type=["xlsx"])
+if uploaded_file:
+    df = pd.read_excel(uploaded_file)
+    new_count = 0
+    for _, row in df.iterrows():
+        pid, name = row["id"], row["name"]
+        if pid not in participants:
+            participants[pid] = {"name": name}
+            new_count += 1
+    save_json(PARTICIPANTS_FILE, participants)
+    st.success(f"✅ {new_count}명 참가자 등록 완료")
+    
 # ---- 아티클 등록 ----
 st.header("2. 주차별 아티클 등록")
 week = st.selectbox("주차 선택", list(range(1, 8)))
