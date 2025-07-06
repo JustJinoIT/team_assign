@@ -126,27 +126,52 @@ st.header("3. 출결 등록")
 selected_week = st.selectbox("출결 등록 주차 선택", list(range(1, 8)))
 participants = load_participants()
 
-# 한 줄에 N명씩 보여주기 (예: 4명씩)
-per_row = 4
-pids = list(participants.keys())
-for i in range(0, len(pids), per_row):
-    cols = st.columns(per_row)
-    for j, pid in enumerate(pids[i:i+per_row]):
-        pdata = participants[pid]
-        with cols[j]:
-            status = st.radio(
-                label=f"{pdata['name']} 출결 상태",
-                options=["attending", "absent_pre", "absent_day"],
-                index=0,  # 기본값 출석
-                key=f"att_{pid}"
-            )
-            if st.button(f"{pdata['name']} 출결 저장", key=f"save_att_{pid}"):
-                db.collection("attendance").add({
-                    "week": str(selected_week),
-                    "participant_id": pid,
-                    "status": status
-                })
-                st.success(f"{pdata['name']} 출결 저장 완료")
+st.markdown("### 불참자만 체크하세요 (체크하지 않은 참가자는 출석 처리됩니다)")
+
+absent_pre = []
+absent_day = []
+
+cols = st.columns(3)  # 불참 종류별로 3컬럼 배치 (선택지 2개 + 이름 표시)
+
+with cols[0]:
+    st.write("이름")
+with cols[1]:
+    st.write("사전 불참")
+with cols[2]:
+    st.write("당일 불참")
+
+absent_pre_keys = []
+absent_day_keys = []
+
+for pid, pdata in participants.items():
+    cols = st.columns(3)
+    cols[0].write(pdata["name"])
+    pre_key = f"absent_pre_{pid}"
+    day_key = f"absent_day_{pid}"
+    absent_pre_checked = st.checkbox("", key=pre_key)
+    absent_day_checked = st.checkbox("", key=day_key)
+
+    # 불참 체크는 둘 중 하나만 가능하게 (둘 다 체크 안 하면 출석)
+    if absent_pre_checked and absent_day_checked:
+        # 하나만 남기도록 강제 (사전 불참 우선)
+        st.session_state[day_key] = False
+
+# 일괄 저장 버튼
+if st.button("일괄 출결 저장"):
+    for pid in participants.keys():
+        status = "attending"
+        if st.session_state.get(f"absent_pre_{pid}", False):
+            status = "absent_pre"
+        elif st.session_state.get(f"absent_day_{pid}", False):
+            status = "absent_day"
+
+        db.collection("attendance").add({
+            "week": str(selected_week),
+            "participant_id": pid,
+            "status": status
+        })
+    st.success("✅ 출결 상태가 저장되었습니다.")
+
 
 # ==== 조 자동 배정 ====
 st.header("4. 조 자동 배정 (기본조 4~5명 + 활동조 배정)")
