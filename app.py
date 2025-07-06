@@ -123,54 +123,32 @@ with st.form("article_form"):
         st.success("✅ 아티클 저장 완료")
 
 st.header("3. 출결 등록")
+
 selected_week = st.selectbox("출결 등록 주차 선택", list(range(1, 8)))
 participants = load_participants()
 
-st.markdown("### 불참자만 체크하세요 (체크하지 않은 참가자는 출석 처리됩니다)")
+# 세션 상태 초기화
+if f"attendance_{selected_week}" not in st.session_state:
+    st.session_state[f"attendance_{selected_week}"] = {}
 
-absent_pre = []
-absent_day = []
+# 불참자 선택 UI
+st.markdown("#### ⛔️ 불참자만 체크하세요 (출석자는 체크할 필요 없습니다)")
 
-cols = st.columns(3)  # 불참 종류별로 3컬럼 배치 (선택지 2개 + 이름 표시)
+cols = st.columns(5)
+for idx, (pid, pdata) in enumerate(participants.items()):
+    col = cols[idx % 5]
+    is_absent = col.checkbox(pdata["name"], key=f"absent_{selected_week}_{pid}")
+    st.session_state[f"attendance_{selected_week}"][pid] = "absent_pre" if is_absent else "attending"
 
-with cols[0]:
-    st.write("이름")
-with cols[1]:
-    st.write("사전 불참")
-with cols[2]:
-    st.write("당일 불참")
-
-absent_pre_keys = []
-absent_day_keys = []
-
-for pid, pdata in participants.items():
-    cols = st.columns(3)
-    cols[0].write(pdata["name"])
-    pre_key = f"absent_pre_{pid}"
-    day_key = f"absent_day_{pid}"
-    absent_pre_checked = st.checkbox("", key=pre_key)
-    absent_day_checked = st.checkbox("", key=day_key)
-
-    # 불참 체크는 둘 중 하나만 가능하게 (둘 다 체크 안 하면 출석)
-    if absent_pre_checked and absent_day_checked:
-        # 하나만 남기도록 강제 (사전 불참 우선)
-        st.session_state[day_key] = False
-
-# 일괄 저장 버튼
-if st.button("일괄 출결 저장"):
-    for pid in participants.keys():
-        status = "attending"
-        if st.session_state.get(f"absent_pre_{pid}", False):
-            status = "absent_pre"
-        elif st.session_state.get(f"absent_day_{pid}", False):
-            status = "absent_day"
-
+if st.button("✅ 출결 저장"):
+    for pid, status in st.session_state[f"attendance_{selected_week}"].items():
         db.collection("attendance").add({
             "week": str(selected_week),
             "participant_id": pid,
             "status": status
         })
-    st.success("✅ 출결 상태가 저장되었습니다.")
+    st.success("출결 상태가 저장되었습니다.")
+
 
 
 # ==== 조 배정 알고리즘 함수 ====
@@ -247,20 +225,19 @@ def assign_groups(selected_week):
 
     return base_groups, activity_groups
 
-# ==== 조 배정 실행 및 저장 ====
 st.header("4. 조 자동 배정 (기본조 4~5명 + 활동조 배정)")
 
-if st.button("조 배정 실행"):
+if st.button("🚀 조 배정 재실행"):
     base_groups, activity_groups = assign_groups(selected_week)
     if base_groups is None:
-        st.error("조 배정 실패: 출석자가 없습니다.")
+        st.error("출석자가 없어 조를 배정할 수 없습니다.")
     else:
-        # 기존 history 삭제
+        # 기존 이력 삭제
         histories = db.collection("history").where("week", "==", str(selected_week)).stream()
         for doc in histories:
             doc.reference.delete()
 
-        # history 저장
+        # 새로 저장
         for idx, group in enumerate(base_groups, start=1):
             for pid in group:
                 db.collection("history").add({
@@ -268,7 +245,6 @@ if st.button("조 배정 실행"):
                     "base_group": f"{idx}조",
                     "participant_id": pid
                 })
-
         for aid, members in activity_groups.items():
             for pid in members:
                 db.collection("history").add({
@@ -276,7 +252,8 @@ if st.button("조 배정 실행"):
                     "activity_group": aid,
                     "participant_id": pid
                 })
-        st.success(f"✅ {selected_week}주차 조 배정 완료")
+        st.success(f"{selected_week}주차 조 배정이 완료되었습니다.")
+
 
 # ==== 조 배정 이력 확인 ====
 st.header("5. 조 배정 이력 확인")
