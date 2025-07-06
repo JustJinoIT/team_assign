@@ -9,11 +9,12 @@ import datetime
 
 # ==== Firebase 초기화 ====
 if not firebase_admin._apps:
-    service_account_info = json.loads(st.secrets["firebase"]["service_account_json"])
     cred = credentials.Certificate(service_account_info)
     firebase_admin.initialize_app(cred, {
-        'storageBucket': st.secrets["firebase"]["storage_bucket"]  # 예: "your-project-id.appspot.com"
+        'storageBucket': st.secrets["firebase"]["storage_bucket"]  # ex: 'myproject-12345.appspot.com'
     })
+
+bucket = storage.bucket()  # 인자 없이 호출 가능
 
 db = firestore.client()
 bucket = storage.bucket()
