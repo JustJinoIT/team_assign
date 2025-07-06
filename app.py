@@ -145,12 +145,14 @@ if st.button("조 배정 실행"):
     present = [pid for pid, status in attendance.get(str(selected_week), {}).items() if status == "attending"]
     random.shuffle(present)
 
+    # 기본조 4~5명 구성
     base_groups = [present[i:i+4] for i in range(0, len(present), 4)]
     if base_groups:
         if len(base_groups[-1]) == 3 and len(present) % 4 != 0:
             if len(base_groups) > 1:
                 base_groups[-2].append(base_groups[-1].pop())
 
+    # 활동조(아티클) 배정
     article_ids = [a['id'] for a in articles.get(str(selected_week), [])]
     activity_groups = {aid: [] for aid in article_ids}
     for pid in present:
@@ -158,10 +160,12 @@ if st.button("조 배정 실행"):
         if aid:
             activity_groups[aid].append(pid)
 
+    # 기존 history 주차 데이터 삭제
     histories = db.collection("history").where("week", "==", str(selected_week)).stream()
     for doc in histories:
         doc.reference.delete()
 
+    # 기본조 history 저장
     for idx, group in enumerate(base_groups, start=1):
         for pid in group:
             db.collection("history").add({
@@ -169,15 +173,6 @@ if st.button("조 배정 실행"):
                 "base_group": f"{idx}조",
                 "participant_id": pid
             })
-
-    for aid, members in activity_groups.items():
-        for pid in members:
-            db.collection("history").add({
-                "week": str(selected_week),
-                "activity_group": aid,
-                "participant_id": pid
-            })
-    st.success(f"✅ {selected_week}주차 조 배정 완료")
 
 # ==== 조 배정 이력 확인 ====
 st.header("5. 조 배정 이력 확인")
