@@ -349,6 +349,3 @@ if uploaded_file:
                         "participant_id": pid
                     })
     st.success("✅ 엑셀에서 참가자 및 출결, 기본조 반영 완료")
-
-
-
