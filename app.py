@@ -161,18 +161,15 @@ def assign_groups(selected_week):
 
     random.shuffle(present)
 
-    # 기본조 최대 4명 우선, 5명도 허용
-    # 3명 조 최소화(출석 인원에 맞춰 조 개수 조정)
+    # 기본조 분할 함수 (4명 위주, 5명도 가능)
     def split_base_groups(present):
         n = len(present)
-        # 4명 기준 최소 조 수
         min_groups = max(1, n // 4)
-        max_groups = min(6, n // 3)  # 최대 6개 조 제한 (요구조건)
-        for g in range(min_groups, max_groups+1):
+        max_groups = min(6, n // 3)
+        for g in range(min_groups, max_groups + 1):
             size = n // g
             rem = n % g
             if size == 4 or (size == 3 and rem == 0):
-                # 4명 조 또는 3명 조 완벽 분할
                 groups = []
                 idx = 0
                 for i in range(g):
@@ -180,9 +177,7 @@ def assign_groups(selected_week):
                     groups.append(present[idx:idx+group_size])
                     idx += group_size
                 return groups
-        # 안 맞으면 기본 4명씩
         groups = [present[i:i+4] for i in range(0, n, 4)]
-        # 3명 조가 생기면 5명 조로 합치기 시도
         if len(groups) > 1 and len(groups[-1]) == 3:
             groups[-2].extend(groups[-1])
             groups.pop()
@@ -190,32 +185,29 @@ def assign_groups(selected_week):
 
     base_groups = split_base_groups(present)
 
-    # 활동조: 아티클 4개 기준으로 배정
     article_list = articles.get(str(selected_week), [])
     article_ids = [a['id'] for a in article_list if a['title'].strip() != ""]
     if len(article_ids) < 4:
-        article_ids = ['A','B','C','D']  # 기본 4개 조
+        article_ids = ['A', 'B', 'C', 'D']
 
-    # 기본조 내 활동조 아티클 겹침 체크
     activity_groups = {aid: [] for aid in article_ids}
-
-    # 조별로 아티클 배정하며 조건 맞추기 (겹침 최소화)
     base_to_activity = {}
 
     for group in base_groups:
-        assigned_articles = set()
+        assigned_articles = []  # 리스트로 변경해서 count 사용 가능
         base_to_activity_group = {}
         for i, pid in enumerate(group):
-            # 4명 조이면 겹치지 않게 순서대로 배정
-            # 5명 조이면 겹칠 수 있음
             if len(group) == 4:
+                # 겹치지 않게 순서대로 배정
                 aid = article_ids[i]
             else:
-                # 5명 조는 랜덤 선택
+                # 5명 조면 겹칠 수도 있음, 겹침 최소화 로직 적용
                 available = [a for a in article_ids if assigned_articles.count(a) < 2] if assigned_articles else article_ids
-                aid = random.choice(article_ids)
+                if not available:
+                    available = article_ids
+                aid = random.choice(available)
             base_to_activity_group[pid] = aid
-            assigned_articles.add(aid)
+            assigned_articles.append(aid)
             activity_groups[aid].append(pid)
         base_to_activity.update(base_to_activity_group)
 
