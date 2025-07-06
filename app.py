@@ -1,23 +1,18 @@
 import streamlit as st
 import json
 import firebase_admin
-from firebase_admin import credentials, firestore, storage
+from firebase_admin import credentials, firestore
 from collections import defaultdict
 import random
 import pandas as pd
-import datetime
 
 # ==== Firebase 초기화 ====
 if not firebase_admin._apps:
+    service_account_info = json.loads(st.secrets["firebase"]["service_account_json"])
     cred = credentials.Certificate(service_account_info)
-    firebase_admin.initialize_app(cred, {
-        'storageBucket': st.secrets["firebase"]["storage_bucket"]  # ex: 'myproject-12345.appspot.com'
-    })
-
-bucket = storage.bucket()  # 인자 없이 호출 가능
+    firebase_admin.initialize_app(cred)
 
 db = firestore.client()
-bucket = storage.bucket()
 
 # ==== 함수: 참가자 불러오기 ====
 def load_participants():
@@ -65,65 +60,48 @@ with st.form("participant_form"):
         db.collection("participants").document(pid).set({"name": name})
         st.success(f"✅ {name} 참가자 등록 완료")
 
-# ==== 엑셀 업로드 및 Firebase Storage 저장 ====
-st.subheader("📥 엑셀 업로드 및 저장 (Firebase Storage + Firestore)")
+# ==== 엑셀 업로드 (중복 참가자 등록 방지 + 출결, 기본조 반영) ====
+st.subheader("📥 엑셀 업로드 (참가자 중복 등록 방지 및 출결/기본조 반영)")
 uploaded_file = st.file_uploader("엑셀(.xlsx) 업로드", type=["xlsx"])
 if uploaded_file:
-    blob = bucket.blob(f"uploaded_excels/{uploaded_file.name}")
-    blob.upload_from_string(uploaded_file.getvalue(), content_type=uploaded_file.type)
-    file_url = blob.generate_signed_url(expiration=datetime.timedelta(days=365))
-    db.collection("uploaded_files").document("last_excel").set({
-        "url": file_url,
-        "uploaded_at": firestore.SERVER_TIMESTAMP,
-        "file_name": uploaded_file.name
-    })
-    st.success("✅ 파일 업로드 및 URL 저장 완료")
-
-# 저장된 파일 URL 불러오기 및 데이터 표시
-doc = db.collection("uploaded_files").document("last_excel").get()
-if doc.exists:
-    data = doc.to_dict()
-    st.markdown(f"### 최근 업로드된 엑셀 파일\n- 파일명: {data.get('file_name', 'unknown')}\n- [파일 다운로드/보기]({data['url']})")
-    try:
-        df = pd.read_excel(data['url'])
-        st.dataframe(df)
-        # 자동으로 참가자 및 출결/기본조 배정 반영
-        # (필요시 수동 버튼으로 변경 가능)
-        if st.button("✅ 저장된 엑셀 데이터 참가자 및 출결 반영"):
+    df = pd.read_excel(uploaded_file)
+    participants = load_participants()
+    # 참가자 중복 확인 후 신규 등록
+    for _, row in df.iterrows():
+        name = str(row.get("성명", "")).strip()
+        if name:
+            pid = name.lower().replace(" ", "")
+            if pid not in participants:
+                db.collection("participants").document(pid).set({"name": name})
+    # 출결 및 기본조 반영
+    for week in range(1, 8):
+        col = f"{week}주차"
+        if col in df.columns:
             for _, row in df.iterrows():
                 name = str(row.get("성명", "")).strip()
-                if name:
-                    pid = name.lower().replace(" ", "")
-                    db.collection("participants").document(pid).set({"name": name})
-            for week in range(1, 8):
-                col = f"{week}주차"
-                if col in df.columns:
-                    for _, row in df.iterrows():
-                        name = str(row.get("성명", "")).strip()
-                        pid = name.lower().replace(" ", "")
-                        val = str(row.get(col, "")).strip()
-                        if val == "불참":
-                            status = "absent_pre"
-                        elif val == "-":
-                            status = "absent_day"
-                        elif val.endswith("조"):
-                            status = "attending"
-                        else:
-                            status = "absent_pre"
-                        db.collection("attendance").add({
-                            "week": str(week),
-                            "participant_id": pid,
-                            "status": status
-                        })
-                        if val.endswith("조"):
-                            db.collection("history").add({
-                                "week": str(week),
-                                "base_group": val,
-                                "participant_id": pid
-                            })
-            st.success("✅ 엑셀 데이터 Firestore 반영 완료")
-    except Exception as e:
-        st.warning(f"저장된 엑셀 파일을 불러오는 데 실패했습니다: {e}")
+                pid = name.lower().replace(" ", "")
+                val = str(row.get(col, "")).strip()
+                if val == "불참":
+                    status = "absent_pre"
+                elif val == "-":
+                    status = "absent_day"
+                elif val.endswith("조"):
+                    status = "attending"
+                else:
+                    status = "absent_pre"
+                db.collection("attendance").add({
+                    "week": str(week),
+                    "participant_id": pid,
+                    "status": status
+                })
+                # 기본조 저장
+                if val.endswith("조"):
+                    db.collection("history").add({
+                        "week": str(week),
+                        "base_group": val,
+                        "participant_id": pid
+                    })
+    st.success("✅ 엑셀에서 참가자 및 출결, 기본조 반영 완료")
 
 # ==== 아티클 관리 ====
 st.header("2. 주차별 아티클 등록")
@@ -144,7 +122,7 @@ with st.form("article_form"):
             db.collection("articles").add(art)
         st.success("✅ 아티클 저장 완료")
 
-# ==== 출결 등록 (기본값: 출석) ====
+# ==== 출결 등록 (기본값 출석) ====
 st.header("3. 출결 등록")
 selected_week = st.selectbox("출결 등록 주차 선택", list(range(1, 8)))
 participants = load_participants()
@@ -168,7 +146,6 @@ if st.button("조 배정 실행"):
     random.shuffle(present)
 
     base_groups = [present[i:i+4] for i in range(0, len(present), 4)]
-
     if base_groups:
         if len(base_groups[-1]) == 3 and len(present) % 4 != 0:
             if len(base_groups) > 1:
@@ -227,4 +204,3 @@ if view_week:
     for ag, members in activity_group_members.items():
         names = ", ".join(participants[pid]['name'] for pid in members if pid in participants)
         st.write(f"{ag}: {names}")
-
