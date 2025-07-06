@@ -14,95 +14,64 @@ if not firebase_admin._apps:
 
 db = firestore.client()
 
-# ==== 데이터 로드 함수 ====
+# ==== 함수: 참가자 불러오기 ====
 def load_participants():
     docs = db.collection("participants").stream()
     return {doc.id: doc.to_dict() for doc in docs}
 
+# ==== 함수: 아티클 불러오기 ====
 def load_articles():
     docs = db.collection("articles").stream()
     result = defaultdict(list)
     for doc in docs:
-        d = doc.to_dict()
-        week = d.get("week")
+        data = doc.to_dict()
+        week = data.get("week")
         if week:
-            result[str(week)].append(d)
+            result[str(week)].append(data)
     return dict(result)
 
-def load_attendance():
-    docs = db.collection("attendance").stream()
-    result = defaultdict(dict)
-    for doc in docs:
-        d = doc.to_dict()
-        week = d.get("week")
-        pid = d.get("participant_id")
-        status = d.get("status")
-        if week and pid:
-            result[str(week)][pid] = status
-    return dict(result)
-
+# ==== 함수: 히스토리 불러오기 ====
 def load_history():
     docs = db.collection("history").stream()
     return {doc.id: doc.to_dict() for doc in docs}
 
-# ==== 참가자 관리 ====
-st.title("🧑‍🤝‍🧑 기본조 + 활동조 배정 프로그램 (Firebase 연동)")
-
-with st.expander("👥 참가자 관리"):
-    participants = load_participants()
-    st.write(f"총 참가자 수: {len(participants)}")
-    to_delete = []
-    cols = st.columns([6,1])
-    cols[0].write("이름 (ID)")
-    cols[1].write("삭제")
-    for pid, pdata in participants.items():
-        cols = st.columns([6,1])
-        cols[0].write(f"{pdata.get('name')} ({pid})")
-        if cols[1].button("삭제", key=f"del_{pid}"):
-            to_delete.append(pid)
-    if to_delete:
-        for pid in to_delete:
-            db.collection("participants").document(pid).delete()
-            # 출결 삭제
-            att_docs = db.collection("attendance").where("participant_id", "==", pid).stream()
-            for doc in att_docs:
-                doc.reference.delete()
-            # 이력 삭제
-            hist_docs = db.collection("history").where("participant_id", "==", pid).stream()
-            for doc in hist_docs:
-                doc.reference.delete()
-        st.success(f"{len(to_delete)}명 삭제 완료")
-        st.experimental_rerun()
+# ==== 함수: 출결 불러오기 ====
+def load_attendance():
+    docs = db.collection("attendance").stream()
+    result = defaultdict(dict)
+    for doc in docs:
+        data = doc.to_dict()
+        week = data.get("week")
+        pid = data.get("participant_id")
+        status = data.get("status")
+        if week and pid:
+            result[str(week)][pid] = status
+    return dict(result)
 
 # ==== 참가자 등록 ====
+st.title("🧑‍🤝‍🧑 기본조 + 활동조 배정 프로그램 (Firebase 연동)")
+
 st.header("1. 참가자 등록")
 with st.form("participant_form"):
     pid = st.text_input("고유 ID (예: jinho)")
     name = st.text_input("이름")
     submit = st.form_submit_button("등록")
-    if submit:
-        if not pid or not name:
-            st.error("ID와 이름을 모두 입력하세요.")
-        else:
-            db.collection("participants").document(pid).set({"name": name})
-            st.success(f"✅ {name} 참가자 등록 완료")
-            st.experimental_rerun()
+    if submit and pid and name:
+        db.collection("participants").document(pid).set({"name": name})
+        st.success(f"✅ {name} 참가자 등록 완료")
 
-# ==== 엑셀 업로드 (참가자 중복 등록 방지 + 출결, 기본조 반영) ====
-st.subheader("📥 엑셀 업로드 (참가자 및 출결/기본조 반영)")
+# ==== 엑셀 업로드 (중복 참가자 등록 방지 + 출결, 기본조 반영) ====
+st.subheader("📥 엑셀 업로드 (참가자 중복 등록 방지 및 출결/기본조 반영)")
 uploaded_file = st.file_uploader("엑셀(.xlsx) 업로드", type=["xlsx"])
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
     participants = load_participants()
-    added = 0
     for _, row in df.iterrows():
         name = str(row.get("성명", "")).strip()
         if name:
             pid = name.lower().replace(" ", "")
             if pid not in participants:
                 db.collection("participants").document(pid).set({"name": name})
-                added += 1
-    # 출결 및 기본조 반영
     for week in range(1, 8):
         col = f"{week}주차"
         if col in df.columns:
@@ -129,70 +98,51 @@ if uploaded_file:
                         "base_group": val,
                         "participant_id": pid
                     })
-    st.success(f"✅ 엑셀 반영 완료 (신규 참가자 {added}명 추가됨)")
+    st.success("✅ 엑셀에서 참가자 및 출결, 기본조 반영 완료")
 
 # ==== 아티클 관리 ====
 st.header("2. 주차별 아티클 등록")
-week = st.selectbox("주차 선택", list(range(1, 8)), key="article_week")
+week = st.selectbox("주차 선택", list(range(1, 8)))
 with st.form("article_form"):
     cols = st.columns(4)
     article_data = []
     for i in range(4):
         with cols[i]:
-            title = st.text_input(f"{i+1}번 제목", key=f"art_title_{week}_{i}")
-            link = st.text_input(f"{i+1}번 링크", key=f"art_link_{week}_{i}")
+            title = st.text_input(f"{i+1}번 제목", key=f"art_title_{i}")
+            link = st.text_input(f"{i+1}번 링크", key=f"art_link_{i}")
             article_data.append({"week": str(week), "id": chr(65+i), "title": title, "link": link})
     if st.form_submit_button("아티클 저장"):
         arts = db.collection("articles").where("week", "==", str(week)).stream()
         for doc in arts:
             doc.reference.delete()
         for art in article_data:
-            if art['title'].strip() != "":
-                db.collection("articles").add(art)
-        st.success(f"✅ {week}주차 아티클 저장 완료")
+            db.collection("articles").add(art)
+        st.success("✅ 아티클 저장 완료")
 
-# ==== 출결 관리 및 등록 ====
-st.header("3. 출결 관리 및 등록")
-selected_week = st.selectbox("출결 관리 주차 선택", list(range(1, 8)), key="attendance_week")
+# ==== 출결 등록 ====
+st.header("3. 출결 등록")
+selected_week = st.selectbox("출결 등록 주차 선택", list(range(1, 8)))
 participants = load_participants()
-attendance = load_attendance()
-week_attendance = attendance.get(str(selected_week), {})
+if f"attendance_{selected_week}" not in st.session_state:
+    st.session_state[f"attendance_{selected_week}"] = {}
 
-st.markdown("#### ⛔️ 불참(사전), 당일불참 체크 (출석은 체크 필요 없음)")
-
+st.markdown("#### ⛔️ 불참자만 체크하세요 (출석자는 체크할 필요 없습니다)")
 cols = st.columns(5)
 for idx, (pid, pdata) in enumerate(participants.items()):
     col = cols[idx % 5]
-    absent_pre_checked = week_attendance.get(pid) == "absent_pre"
-    absent_day_checked = week_attendance.get(pid) == "absent_day"
-    col.write(pdata["name"])
-    absent_pre = col.checkbox("불참", key=f"absent_pre_{selected_week}_{pid}", value=absent_pre_checked)
-    absent_day = col.checkbox("당일불참", key=f"absent_day_{selected_week}_{pid}", value=absent_day_checked)
-    # 상호 배타적 체크 처리
-    if absent_pre and absent_day:
-        # 둘 다 체크 안 되도록 처리 (가장 최근 상태 반영)
-        if st.session_state[f"absent_pre_{selected_week}_{pid}"] != absent_pre_checked:
-            st.session_state[f"absent_day_{selected_week}_{pid}"] = False
-        else:
-            st.session_state[f"absent_pre_{selected_week}_{pid}"] = False
+    is_absent = col.checkbox(pdata["name"], key=f"absent_{selected_week}_{pid}")
+    st.session_state[f"attendance_{selected_week}"][pid] = "absent_pre" if is_absent else "attending"
 
 if st.button("✅ 출결 저장"):
-    for pid in participants.keys():
-        if st.session_state.get(f"absent_pre_{selected_week}_{pid}", False):
-            status = "absent_pre"
-        elif st.session_state.get(f"absent_day_{selected_week}_{pid}", False):
-            status = "absent_day"
-        else:
-            status = "attending"
+    for pid, status in st.session_state[f"attendance_{selected_week}"].items():
         db.collection("attendance").add({
             "week": str(selected_week),
             "participant_id": pid,
             "status": status
         })
-    st.success("✅ 출결 저장 완료")
+    st.success("출결 상태가 저장되었습니다.")
 
-# ==== 조 배정 함수 ====
-
+# ==== 조 배정 알고리즘 함수 ====
 def assign_groups(selected_week):
     attendance = load_attendance()
     participants = load_participants()
@@ -205,7 +155,7 @@ def assign_groups(selected_week):
 
     random.shuffle(present)
 
-    # 기본조 4명 우선 (5명 가능), 최소 3명 조 최소화
+    # 기본조 최대 4명 우선, 5명도 허용
     def split_base_groups(present):
         n = len(present)
         min_groups = max(1, n // 4)
@@ -229,11 +179,10 @@ def assign_groups(selected_week):
 
     base_groups = split_base_groups(present)
 
-    # 활동조: 아티클 4개 기준으로 배정
     article_list = articles.get(str(selected_week), [])
     article_ids = [a['id'] for a in article_list if a['title'].strip() != ""]
     if len(article_ids) < 4:
-        article_ids = ['A','B','C','D']
+        article_ids = ['A','B','C','D']  # 기본 4개 조
 
     activity_groups = {aid: [] for aid in article_ids}
     base_to_activity = {}
@@ -243,15 +192,10 @@ def assign_groups(selected_week):
         base_to_activity_group = {}
         for i, pid in enumerate(group):
             if len(group) == 4:
-                # 겹치지 않도록 순서대로
                 aid = article_ids[i]
             else:
-                # 5명 조일 경우 겹칠 수 있음, 최대 2명까지 제한 예시
-                counts = {a: sum([1 for p in activity_groups[a] if p in group]) for a in article_ids}
-                candidates = [a for a in article_ids if counts[a] < 2]
-                if not candidates:
-                    candidates = article_ids
-                aid = random.choice(candidates)
+                # 5명 조는 겹침 허용
+                aid = random.choice(article_ids)
             base_to_activity_group[pid] = aid
             assigned_articles.add(aid)
             activity_groups[aid].append(pid)
@@ -259,84 +203,112 @@ def assign_groups(selected_week):
 
     return base_groups, activity_groups
 
-# ==== 조 배정 실행/재실행 버튼 ====
 st.header("4. 조 자동 배정 (기본조 4~5명 + 활동조 배정)")
-histories_query = db.collection("history").where("week", "==", str(selected_week)).limit(1).stream()
-has_history = any(True for _ in histories_query)
 
-if has_history:
-    if st.button("🔄 조 배정 재실행"):
-        base_groups, activity_groups = assign_groups(selected_week)
+histories = load_history()
+weeks_with_history = sorted(set(h['week'] for h in histories.values()))
+
+selected_week_for_assign = st.selectbox("주차 선택 (조 배정)", list(range(1, 8)))
+
+# 조 배정 버튼 조건부 출력
+if str(selected_week_for_assign) in weeks_with_history:
+    if st.button(f"🚀 {selected_week_for_assign}주차 조 배정 재실행"):
+        base_groups, activity_groups = assign_groups(selected_week_for_assign)
         if base_groups is None:
             st.error("출석자가 없어 조를 배정할 수 없습니다.")
         else:
-            histories = db.collection("history").where("week", "==", str(selected_week)).stream()
+            # 기존 이력 삭제
+            histories = db.collection("history").where("week", "==", str(selected_week_for_assign)).stream()
             for doc in histories:
                 doc.reference.delete()
+            # 새로 저장
             for idx, group in enumerate(base_groups, start=1):
                 for pid in group:
                     db.collection("history").add({
-                        "week": str(selected_week),
+                        "week": str(selected_week_for_assign),
                         "base_group": f"{idx}조",
                         "participant_id": pid
                     })
-            for aid, pids in activity_groups.items():
-                for pid in pids:
+            for aid, members in activity_groups.items():
+                for pid in members:
                     db.collection("history").add({
-                        "week": str(selected_week),
+                        "week": str(selected_week_for_assign),
                         "activity_group": aid,
                         "participant_id": pid
                     })
-            st.success("🔄 조 배정 재실행 완료!")
+            st.success(f"{selected_week_for_assign}주차 조 배정이 완료되었습니다.")
 else:
-    if st.button("🚀 조 배정 실행"):
-        base_groups, activity_groups = assign_groups(selected_week)
+    if st.button(f"🚀 {selected_week_for_assign}주차 조 배정 실행"):
+        base_groups, activity_groups = assign_groups(selected_week_for_assign)
         if base_groups is None:
             st.error("출석자가 없어 조를 배정할 수 없습니다.")
         else:
+            # 기존 이력 삭제 (없어도 안전하게)
+            histories = db.collection("history").where("week", "==", str(selected_week_for_assign)).stream()
+            for doc in histories:
+                doc.reference.delete()
+            # 새로 저장
             for idx, group in enumerate(base_groups, start=1):
                 for pid in group:
                     db.collection("history").add({
-                        "week": str(selected_week),
+                        "week": str(selected_week_for_assign),
                         "base_group": f"{idx}조",
                         "participant_id": pid
                     })
-            for aid, pids in activity_groups.items():
-                for pid in pids:
+            for aid, members in activity_groups.items():
+                for pid in members:
                     db.collection("history").add({
-                        "week": str(selected_week),
+                        "week": str(selected_week_for_assign),
                         "activity_group": aid,
                         "participant_id": pid
                     })
-            st.success("🚀 조 배정 실행 완료!")
+            st.success(f"{selected_week_for_assign}주차 조 배정이 완료되었습니다.")
 
 # ==== 조 배정 이력 확인 ====
 st.header("5. 조 배정 이력 확인")
-history_docs = db.collection("history").where("week", "==", str(selected_week)).stream()
-base_group_map = defaultdict(list)
-activity_group_map = defaultdict(list)
+histories = load_history()
 participants = load_participants()
+weeks = sorted(set(h['week'] for h in histories.values()), reverse=True)
 
-for doc in history_docs:
-    d = doc.to_dict()
-    pid = d.get("participant_id")
-    pname = participants.get(pid, {}).get("name", pid)
-    if "base_group" in d:
-        base_group_map[d["base_group"]].append(pname)
-    if "activity_group" in d:
-        activity_group_map[d["activity_group"]].append(pname)
+if weeks:
+    view_week = st.selectbox("이력 확인 주차 선택", weeks)
+    if view_week:
+        base_group_members = defaultdict(list)
+        activity_group_members = defaultdict(list)
+        for h in histories.values():
+            if h['week'] == view_week:
+                if 'base_group' in h:
+                    base_group_members[h['base_group']].append(h['participant_id'])
+                if 'activity_group' in h:
+                    activity_group_members[h['activity_group']].append(h['participant_id'])
 
-st.subheader("기본조")
-if base_group_map:
-    for bg, members in sorted(base_group_map.items()):
-        st.write(f"**{bg}** : {', '.join(members)}")
-else:
-    st.write("기본조 배정 내역이 없습니다.")
+        st.subheader("기본조")
+        for bg, members in sorted(base_group_members.items()):
+            names = ", ".join(participants[pid]['name'] for pid in members if pid in participants)
+            st.write(f"{bg}: {names}")
 
-st.subheader("활동조")
-if activity_group_map:
-    for ag, members in sorted(activity_group_map.items()):
-        st.write(f"**{ag} 아티클** : {', '.join(members)}")
-else:
-    st.write("활동조 배정 내역이 없습니다.")
+        st.subheader("활동조")
+        for ag, members in sorted(activity_group_members.items()):
+            names = ", ".join(participants[pid]['name'] for pid in members if pid in participants)
+            st.write(f"{ag}: {names}")
+
+# ==== 개인별 아티클 배정 현황 표시 ====
+if weeks and view_week:
+    st.header(f"{view_week}주차 개인별 아티클 배정 현황")
+    participant_article_map = {}
+    for h in histories.values():
+        if h.get("week") == view_week and "activity_group" in h:
+            pid = h["participant_id"]
+            article_id = h["activity_group"]
+            participant_article_map[pid] = article_id
+
+    articles = load_articles()
+    article_list = articles.get(view_week, [])
+    article_title_map = {a["id"]: a["title"] for a in article_list}
+
+    for pid, pdata in participants.items():
+        name = pdata["name"]
+        article_id = participant_article_map.get(pid, "-")
+        article_title = article_title_map.get(article_id, "-") if article_id != "-" else "-"
+        st.write(f"{name} : {article_id} - {article_title}")
 
