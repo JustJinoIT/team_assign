@@ -122,19 +122,31 @@ with st.form("article_form"):
             db.collection("articles").add(art)
         st.success("✅ 아티클 저장 완료")
 
-# ==== 출결 등록 (기본값 출석) ====
 st.header("3. 출결 등록")
 selected_week = st.selectbox("출결 등록 주차 선택", list(range(1, 8)))
 participants = load_participants()
-for pid, pdata in participants.items():
-    status = st.radio(f"{pdata['name']} 출결 상태", ["attending", "absent_pre", "absent_day"], index=0, key=f"att_{pid}")
-    if st.button(f"{pdata['name']} 출결 저장", key=f"save_att_{pid}"):
-        db.collection("attendance").add({
-            "week": str(selected_week),
-            "participant_id": pid,
-            "status": status
-        })
-        st.success(f"{pdata['name']} 출결 저장 완료")
+
+# 한 줄에 N명씩 보여주기 (예: 4명씩)
+per_row = 4
+pids = list(participants.keys())
+for i in range(0, len(pids), per_row):
+    cols = st.columns(per_row)
+    for j, pid in enumerate(pids[i:i+per_row]):
+        pdata = participants[pid]
+        with cols[j]:
+            status = st.radio(
+                label=f"{pdata['name']} 출결 상태",
+                options=["attending", "absent_pre", "absent_day"],
+                index=0,  # 기본값 출석
+                key=f"att_{pid}"
+            )
+            if st.button(f"{pdata['name']} 출결 저장", key=f"save_att_{pid}"):
+                db.collection("attendance").add({
+                    "week": str(selected_week),
+                    "participant_id": pid,
+                    "status": status
+                })
+                st.success(f"{pdata['name']} 출결 저장 완료")
 
 # ==== 조 자동 배정 ====
 st.header("4. 조 자동 배정 (기본조 4~5명 + 활동조 배정)")
