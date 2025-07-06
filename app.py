@@ -89,7 +89,7 @@ else:
                 doc.reference.delete()
             for art in article_data:
                 if art["title"].strip():
-                    db.collection("articles"].add(art)
+                    db.collection("articles").add(art)
             st.success("✅ 아티클 저장 완료")
 
 # --- 3. 출결 등록 ---
