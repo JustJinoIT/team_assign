@@ -269,7 +269,6 @@ st.header("5. 조 배정 이력 확인")
 histories = load_history()
 participants = load_participants()
 weeks = sorted(set(h['week'] for h in histories.values()), reverse=True)
-
 if weeks:
     view_week = st.selectbox("이력 확인 주차 선택", weeks)
     if view_week:
@@ -292,23 +291,20 @@ if weeks:
             names = ", ".join(participants[pid]['name'] for pid in members if pid in participants)
             st.write(f"{ag}: {names}")
 
-# ==== 개인별 아티클 배정 현황 표시 ====
-if weeks and view_week:
-    st.header(f"{view_week}주차 개인별 아티클 배정 현황")
-    participant_article_map = {}
-    for h in histories.values():
-        if h.get("week") == view_week and "activity_group" in h:
-            pid = h["participant_id"]
-            article_id = h["activity_group"]
-            participant_article_map[pid] = article_id
+        # ==== 조별 개인별 아티클 번호 함께 표시 ====
+        st.header(f"{view_week}주차 기본조 및 아티클 배정 현황")
+        participant_article_map = {}
+        for h in histories.values():
+            if h.get("week") == view_week and "activity_group" in h:
+                pid = h["participant_id"]
+                article_id = h["activity_group"]
+                participant_article_map[pid] = article_id
 
-    articles = load_articles()
-    article_list = articles.get(view_week, [])
-    article_title_map = {a["id"]: a["title"] for a in article_list}
-
-    for pid, pdata in participants.items():
-        name = pdata["name"]
-        article_id = participant_article_map.get(pid, "-")
-        article_title = article_title_map.get(article_id, "-") if article_id != "-" else "-"
-        st.write(f"{name} : {article_id} - {article_title}")
+        for bg, members in sorted(base_group_members.items()):
+            display_names = []
+            for pid in members:
+                name = participants[pid]["name"] if pid in participants else pid
+                article_id = participant_article_map.get(pid, "-")
+                display_names.append(f"{name}({article_id})")
+            st.write(f"{bg}: " + ", ".join(display_names))
 
