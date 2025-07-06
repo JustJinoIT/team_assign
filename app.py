@@ -302,4 +302,5 @@ if weeks:
 
         st.subheader("활동조")
         for ag, members in sorted(activity_group_members.items()):
-            names = ", ".join(participants[pid]['name']
+            names = ", ".join(participants[pid]['name'] for pid in members if pid in participants)
+            st.write(f"{ag}: {names}")
