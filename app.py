@@ -122,18 +122,14 @@ with st.form("article_form"):
             db.collection("articles").add(art)
         st.success("✅ 아티클 저장 완료")
 
+# ==== 출결 등록 ====
 st.header("3. 출결 등록")
-
 selected_week = st.selectbox("출결 등록 주차 선택", list(range(1, 8)))
 participants = load_participants()
-
-# 세션 상태 초기화
 if f"attendance_{selected_week}" not in st.session_state:
     st.session_state[f"attendance_{selected_week}"] = {}
 
-# 불참자 선택 UI
 st.markdown("#### ⛔️ 불참자만 체크하세요 (출석자는 체크할 필요 없습니다)")
-
 cols = st.columns(5)
 for idx, (pid, pdata) in enumerate(participants.items()):
     col = cols[idx % 5]
