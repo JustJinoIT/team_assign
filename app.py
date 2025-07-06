@@ -60,6 +60,34 @@ with st.form("participant_form"):
         db.collection("participants").document(pid).set({"name": name})
         st.success(f"✅ {name} 참가자 등록 완료")
 
+# ---- Google 시트 연동 ----
+st.subheader("📎 Google Sheets 연동 (선택 사항)")
+with st.expander("▶️ Google Sheets에서 불러오기 설정"):
+    st.markdown("1. Google Cloud에서 서비스 계정 JSON 키 발급")
+    st.markdown("2. 시트 공유: 서비스 계정 이메일을 시트에 공유 (편집 권한)")
+    st.markdown("3. 아래 항목을 입력 후 시트 불러오기")
+
+    sheet_json_path = st.text_input("🔑 JSON 키 파일 경로 (서버에 업로드된 경로)")
+    sheet_url_or_key = st.text_input("📄 시트 URL 또는 문서 키")
+    sheet_name = st.text_input("📑 시트 이름 (예: Sheet1)", value="Sheet1")
+    if st.button("Google 시트 불러오기"):
+        try:
+            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            credentials = ServiceAccountCredentials.from_json_keyfile_name(sheet_json_path, scope)
+            gc = gspread.authorize(credentials)
+            if "https://" in sheet_url_or_key:
+                sh = gc.open_by_url(sheet_url_or_key)
+            else:
+                sh = gc.open_by_key(sheet_url_or_key)
+            worksheet = sh.worksheet(sheet_name)
+            df = pd.DataFrame(worksheet.get_all_records())
+            st.success("✅ 시트 데이터 불러오기 성공")
+        except Exception as e:
+            st.error(f"❌ 시트 불러오기 실패: {e}")
+            df = None
+    else:
+        df = None
+        
 # ==== 엑셀 업로드로 참가자 및 주차별 조 배정 불러오기 ====
 st.subheader("📥 엑셀 업로드 (참가자 + 조 배정 자동 적용)")
 uploaded_file = st.file_uploader("엑셀(.xlsx) 업로드", type=["xlsx"])
