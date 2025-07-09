@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st 
 import json
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -51,10 +51,15 @@ def assign_groups(week, present, article_list):
 
     def split_base_groups():
         n = len(present)
-        groups = [present[i:i+4] for i in range(0, n, 4)]
-        if len(groups) > 1 and len(groups[-1]) == 3:
-            groups[-2].extend(groups[-1])
-            groups.pop()
+        q, r = divmod(n, 4)
+        group_sizes = [4] * q
+        for i in range(r):
+            group_sizes[i % len(group_sizes)] += 1
+        groups = []
+        index = 0
+        for size in group_sizes:
+            groups.append(present[index:index+size])
+            index += size
         return groups
 
     base_groups = split_base_groups()
@@ -65,12 +70,11 @@ def assign_groups(week, present, article_list):
     for group in base_groups:
         assigned = set()
         for i, pid in enumerate(group):
-            aid = article_ids[i % len(article_ids)] if len(group) <= 4 else random.choice(article_ids)
+            aid = article_ids[i % len(article_ids)]
             base_to_activity[pid] = aid
             activity_groups[aid].append(pid)
 
     return base_groups, base_to_activity, activity_groups
-
 
 def save_history(week, base_groups, activity_map):
     existing = db.collection("history").where("week", "==", str(week)).stream()
@@ -90,7 +94,6 @@ def save_history(week, base_groups, activity_map):
             "activity_group": aid,
             "participant_id": pid
         })
-
 
 def render_history(week, participants):
     history = load_history()
@@ -135,8 +138,9 @@ cols = st.columns(5)
 for idx, (pid, pdata) in enumerate(participants.items()):
     col = cols[idx % 5]
     if col.button(f"❌ {pdata['name']}", key=pid):
-        db.collection("participants").document(pid).delete()
-        st.experimental_rerun()
+        if st.confirm(f"정말로 {pdata['name']} 참가자를 삭제하시겠습니까?"):
+            db.collection("participants").document(pid).delete()
+            st.experimental_rerun()
 
 # 주차 선택
 st.header("2. 주차 선택")
@@ -171,7 +175,7 @@ for idx, (pid, pdata) in enumerate(participants.items()):
     label = pdata['name']
     if previous == "absent_pre":
         label += " (불참)"
-    is_absent = col.checkbox(label, key=f"att_{pid}_{selected_week}")
+    is_absent = col.checkbox(label, key=f"att_{pid}_{selected_week}", value=(previous == "absent_pre"))
     st.session_state[f"attendance_{selected_week}"][pid] = "absent_pre" if is_absent else "attending"
 
 if st.button("✅ 출결 저장"):
@@ -204,4 +208,5 @@ if st.button("⚠️ 당일 재구성"):
 # 이력 보기
 st.header("6. 이력 보기")
 render_history(selected_week, participants)
+
 
